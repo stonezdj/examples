@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/tls"
+	"crypto/x509"
 	"io"
 	"io/ioutil"
 	"log"
@@ -32,33 +33,29 @@ func middlewareOne(next http.Handler) http.Handler {
 		r.URL.Scheme = url.Scheme
 		r.Header.Set("X-Forwarded-Host", r.Header.Get("Host"))
 		r.Host = url.Host
+
+		rootCAs, _ := x509.SystemCertPool()
+		if rootCAs == nil {
+			rootCAs = x509.NewCertPool()
+		}
+
+		localCertFile := "/Users/daojunz/Downloads/cert/ca.crt"
+		certs, err := ioutil.ReadFile(localCertFile)
+		if err != nil {
+			log.Fatalf("Failed to append %q to RootCAs: %v", localCertFile, err)
+		}
+
+		if ok := rootCAs.AppendCertsFromPEM(certs); !ok {
+			log.Println("No certs appended, using system certs only")
+		}
+
 		config := &tls.Config{
-			InsecureSkipVerify: true,
+			InsecureSkipVerify: false,
+			RootCAs:            rootCAs,
 		}
 
 		proxy.Transport = &http.Transport{TLSClientConfig: config}
 		proxy.ServeHTTP(w, r)
-		//destConn, err := net.DialTimeout("tcp", "www.apache.org:80", 10*time.Second)
-		//if err != nil {
-		//	http.Error(w, err.Error(), http.StatusServiceUnavailable)
-		//	return
-		//}
-		//w.WriteHeader(http.StatusOK)
-		//
-		//hj, ok:=w.(http.Hijacker)
-		//if !ok {
-		//	http.Error(w, "web server doesn't support hijacking", http.StatusInternalServerError)
-		//	return
-		//}
-		//
-		//clientConn, _, err := hj.Hijack()
-		//if err != nil {
-		//	http.Error(w, err.Error(), http.StatusInternalServerError)
-		//	return
-		//}
-		//
-		//go transfer(destConn, clientConn)
-		//go transfer(clientConn, destConn)
 
 		//next.ServeHTTP(w, r)
 		log.Println("Executing middlewareOne again")
