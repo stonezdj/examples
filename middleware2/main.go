@@ -13,7 +13,8 @@ import (
 )
 
 // This sample use middleware to catch the request body and response body
-
+//how to write a reverse proxy in go
+//https://hackernoon.com/writing-a-reverse-proxy-in-just-one-line-with-go-c1edfa78c84b
 func transfer(destination io.WriteCloser, source io.ReadCloser) {
 	defer destination.Close()
 	defer source.Close()
