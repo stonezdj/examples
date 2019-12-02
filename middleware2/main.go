@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
+	"fmt"
+	"github.com/hiboot/pkg/utils/crypto/base64"
 	"io"
 	"io/ioutil"
 	"log"
@@ -21,46 +24,96 @@ func transfer(destination io.WriteCloser, source io.ReadCloser) {
 	io.Copy(destination, source)
 }
 
+type DebugTransport struct {
+}
+
+func (DebugTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	b, err := httputil.DumpRequestOut(r, false)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Println(string(b))
+	return http.DefaultTransport.RoundTrip(r)
+}
+
 // this middleware is used to proxy a https web server
 func middlewareOne(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Println("Executing middlewareOne")
-		url, err := url.Parse("https://10.160.215.19/harbor/projects/1/repositories")
-		if err != nil {
-			log.Println(err)
-		}
-		proxy := httputil.NewSingleHostReverseProxy(url)
-		r.URL.Host = url.Host
-		r.URL.Scheme = url.Scheme
-		r.Header.Set("X-Forwarded-Host", r.Header.Get("Host"))
-		r.Host = url.Host
 
-		rootCAs, _ := x509.SystemCertPool()
-		if rootCAs == nil {
-			rootCAs = x509.NewCertPool()
+		if r.Method != http.MethodGet {
+			next.ServeHTTP(w, r)
+			return
 		}
 
-		localCertFile := "/Users/daojunz/Downloads/cert/ca.crt"
-		certs, err := ioutil.ReadFile(localCertFile)
-		if err != nil {
-			log.Fatalf("Failed to append %q to RootCAs: %v", localCertFile, err)
-		}
+		proxyHost := "10.160.210.111"
+		username := "admin"
+		password := "Harbor12345"
+		repoName := "library/envoy"
+		opType := "pull"
+		token := RetrieveBearerToken(proxyHost, username, password, repoName, opType)
+		fmt.Printf("Bearer token is %s\n", token.Token)
 
-		if ok := rootCAs.AppendCertsFromPEM(certs); !ok {
-			log.Println("No certs appended, using system certs only")
+		proxyBaseUrl := &url.URL{
+			Scheme: "https",
+			Host:   proxyHost,
+			Path:   "/",
 		}
+		fmt.Printf("request url before response: %#v\n", r.URL)
+		fmt.Printf("proxy base url before response: %#v\n", proxyBaseUrl)
+		proxy := NewSingleHostReverseProxy(proxyBaseUrl)
 
-		config := &tls.Config{
-			InsecureSkipVerify: false,
-			RootCAs:            rootCAs,
-		}
+		fmt.Printf("request url path is %v\n", r.URL.Path)
+		fmt.Printf("target url path is %v\n", proxyBaseUrl.Path)
 
+		//r.Header.Set("X-Forwarded-Host", r.Header.Get("Host"))
+		bearer := fmt.Sprintf("Bearer %s", token.Token)
+		r.Header.Set("Authorization", bearer)
+		r.Host = r.URL.Host
+
+		fmt.Printf("The request url is %s\n", r.URL.String())
+
+		config := GetLocalTLSConfig()
 		proxy.Transport = &http.Transport{TLSClientConfig: config}
-		proxy.ServeHTTP(w, r)
 
-		//next.ServeHTTP(w, r)
+		proxy.ServeHTTP(w, r)
+		fmt.Printf("request url after response: %#v\n", r.URL)
+
 		log.Println("Executing middlewareOne again")
 	})
+}
+
+func NewSingleHostReverseProxy(target *url.URL) *httputil.ReverseProxy {
+	//targetQuery := target.RawQuery
+	director := func(req *http.Request) {
+		req.URL.Scheme = target.Scheme
+		req.URL.Host = target.Host
+		fmt.Printf("The target url path is %v\n", target.Path)
+		fmt.Printf("The request url path is %v\n", req.URL.Path)
+		fmt.Printf("The request in director is %#v\n", req)
+		fmt.Printf("The request url in director is %#v\n", req.URL)
+	}
+	return &httputil.ReverseProxy{Director: director}
+}
+
+func GetLocalTLSConfig() *tls.Config {
+	rootCAs, _ := x509.SystemCertPool()
+	if rootCAs == nil {
+		rootCAs = x509.NewCertPool()
+	}
+	localCertFile := "/Users/daojunz/Downloads/cert/ca.crt"
+	certs, err := ioutil.ReadFile(localCertFile)
+	if err != nil {
+		log.Fatalf("Failed to append %q to RootCAs: %v", localCertFile, err)
+	}
+	if ok := rootCAs.AppendCertsFromPEM(certs); !ok {
+		log.Println("No certs appended, using system certs only")
+	}
+	config := &tls.Config{
+		InsecureSkipVerify: true,
+		RootCAs:            rootCAs,
+	}
+	return config
 }
 
 type MyResponseWriter struct {
@@ -74,42 +127,138 @@ func (mrw *MyResponseWriter) Write(p []byte) (int, error) {
 }
 
 // this middleware is used to peek the request content and response content.
-func middlewareTwo(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Println("Executing middlewareTwo")
-		if r.URL.Path != "/" {
-			return
-		}
+//func middlewareTwo(next http.Handler) http.Handler {
+//	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+//		log.Println("Executing middlewareTwo")
+//		//if r.URL.Path != "/" {
+//		//	return
+//		//}
+//
+//		body, err := ioutil.ReadAll(r.Body)
+//		if err != nil {
+//			log.Printf("Error reading body: %v", err)
+//			http.Error(w, "can't read body", http.StatusBadRequest)
+//			return
+//		} else {
+//			log.Printf("the body is %v", string(body))
+//		}
+//
+//		mrw := &MyResponseWriter{
+//			ResponseWriter: w,
+//			Buf:            &bytes.Buffer{},
+//		}
+//		next.ServeHTTP(mrw, r)
+//
+//		log.Printf("The response is %v\n", mrw.Buf.String())
+//
+//		log.Println("Executing middlewareTwo again")
+//	})
+//}
 
-		body, err := ioutil.ReadAll(r.Body)
-		if err != nil {
-			log.Printf("Error reading body: %v", err)
-			http.Error(w, "can't read body", http.StatusBadRequest)
-			return
-		} else {
-			log.Printf("the body is %v", string(body))
-		}
-
-		mrw := &MyResponseWriter{
-			ResponseWriter: w,
-			Buf:            &bytes.Buffer{},
-		}
-		next.ServeHTTP(mrw, r)
-
-		log.Printf("The response is %v\n", mrw.Buf.String())
-
-		log.Println("Executing middlewareTwo again")
-	})
-}
-
-func final(w http.ResponseWriter, r *http.Request) {
+func Final(w http.ResponseWriter, r *http.Request) {
 	log.Println("Executing finalHandler")
 	w.Write([]byte("OK123\n"))
 }
 
 func main() {
-	finalHandler := http.HandlerFunc(final)
+	finalHandler := http.HandlerFunc(Final)
 
-	http.Handle("/", middlewareOne(middlewareTwo(finalHandler)))
+	//http.Handle("/", middlewareOne(middlewareTwo(finalHandler)))
+	http.Handle("/", middlewareOne(finalHandler))
 	http.ListenAndServe(":3000", nil)
+}
+
+func GetManifest(manifestUrl string, token *BearerToken) []byte {
+	req2, err := http.NewRequest("GET", manifestUrl, nil)
+	if err != nil {
+		fmt.Println(err)
+	}
+	bt := fmt.Sprintf("Bearer %s", token.Token)
+	fmt.Println(bt)
+	req2.Header.Add("Authorization", bt)
+	req2.Header.Add("Accept", "application/vnd.docker.distribution.manifest.v2+json")
+	client := getHttpClient()
+	resp2, err := client.Do(req2)
+	if err != nil {
+		fmt.Println(err)
+	}
+	body2, err := ioutil.ReadAll(resp2.Body)
+	if err != nil {
+		return []byte{}
+	}
+	return body2
+}
+
+func GetAuthorization(name, password string) string {
+	return string(base64.Encode([]byte(fmt.Sprintf("%s:%s", name, password))))
+}
+
+func RetrieveBearerToken(hostname string, username string, password string, repoName string, opType string) *BearerToken {
+	client := getHttpClient()
+	urlString := fmt.Sprintf("https://%s/service/token?account=%s&scope=repository:%s:%s&service=harbor-registry", hostname, username, repoName, opType)
+	req, err := http.NewRequest("GET", urlString, nil)
+	if err != nil {
+		fmt.Println(err)
+	}
+	req.Header.Add("Accept", "application/json")
+	//req.Header.Add("Authorization", "YWRtaW46SGFyYm9yITIzNDU=") //admin:Harbor!2345
+	req.Header.Add("Authorization", GetAuthorization(username, password)) //admin:Harbor!2345
+
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Println(err)
+	}
+	body, err := ioutil.ReadAll(resp.Body)
+	token := &BearerToken{}
+	json.Unmarshal(body, token)
+	return token
+}
+
+func getHttpClient() *http.Client {
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+		},
+	}
+	client := &http.Client{
+		Transport: tr,
+	}
+	return client
+}
+
+func ExtractDigest(body2 []byte) []string {
+	fmt.Printf("The manifest content1 is %q\n", string(body2))
+	digestList := make([]string, 0)
+	rawIn := json.RawMessage(body2)
+	bytes, err := rawIn.MarshalJSON()
+	if err != nil {
+		panic(err)
+	}
+	m := &Manifest{}
+	fmt.Printf("The manifest content2 is %q\n", bytes)
+	err = json.Unmarshal(bytes, m)
+	if err != nil {
+		fmt.Println(err)
+	}
+	fmt.Printf("manifest is : %#v", m)
+	for _, l := range m.Layers {
+		digestList = append(digestList, fmt.Sprintf("%v", l["digest"]))
+	}
+	return digestList
+}
+
+type BearerToken struct {
+	Token       string `json:"token"`
+	AccessToken string `json:"access_token"`
+	ExpiresIn   int    `json:"expires_in"`
+}
+
+type Manifest struct {
+	SchemaVersion int                      `json:"schemaVersion"`
+	MediaType     string                   `json:"mediaType"`
+	Config        Config                   `json:"config"`
+	Layers        []map[string]interface{} `json:"layers"`
+}
+type Config struct {
+	MediaType string `json:"mediaType"`
 }
