@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 )
 
 // This sample use middleware to catch the request body and response body
@@ -45,6 +46,10 @@ func middlewareOne(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/v2/"){
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		proxyHost := "10.160.210.111"
 		username := "admin"
@@ -61,7 +66,7 @@ func middlewareOne(next http.Handler) http.Handler {
 		}
 		fmt.Printf("request url before response: %#v\n", r.URL)
 		fmt.Printf("proxy base url before response: %#v\n", proxyBaseUrl)
-		proxy := NewSingleHostReverseProxy(proxyBaseUrl)
+		proxy := httputil.NewSingleHostReverseProxy(proxyBaseUrl)
 
 		fmt.Printf("request url path is %v\n", r.URL.Path)
 		fmt.Printf("target url path is %v\n", proxyBaseUrl.Path)
@@ -83,18 +88,6 @@ func middlewareOne(next http.Handler) http.Handler {
 	})
 }
 
-func NewSingleHostReverseProxy(target *url.URL) *httputil.ReverseProxy {
-	//targetQuery := target.RawQuery
-	director := func(req *http.Request) {
-		req.URL.Scheme = target.Scheme
-		req.URL.Host = target.Host
-		fmt.Printf("The target url path is %v\n", target.Path)
-		fmt.Printf("The request url path is %v\n", req.URL.Path)
-		fmt.Printf("The request in director is %#v\n", req)
-		fmt.Printf("The request url in director is %#v\n", req.URL)
-	}
-	return &httputil.ReverseProxy{Director: director}
-}
 
 func GetLocalTLSConfig() *tls.Config {
 	rootCAs, _ := x509.SystemCertPool()
@@ -126,38 +119,10 @@ func (mrw *MyResponseWriter) Write(p []byte) (int, error) {
 	return mrw.ResponseWriter.Write(p)
 }
 
-// this middleware is used to peek the request content and response content.
-//func middlewareTwo(next http.Handler) http.Handler {
-//	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-//		log.Println("Executing middlewareTwo")
-//		//if r.URL.Path != "/" {
-//		//	return
-//		//}
-//
-//		body, err := ioutil.ReadAll(r.Body)
-//		if err != nil {
-//			log.Printf("Error reading body: %v", err)
-//			http.Error(w, "can't read body", http.StatusBadRequest)
-//			return
-//		} else {
-//			log.Printf("the body is %v", string(body))
-//		}
-//
-//		mrw := &MyResponseWriter{
-//			ResponseWriter: w,
-//			Buf:            &bytes.Buffer{},
-//		}
-//		next.ServeHTTP(mrw, r)
-//
-//		log.Printf("The response is %v\n", mrw.Buf.String())
-//
-//		log.Println("Executing middlewareTwo again")
-//	})
-//}
 
 func Final(w http.ResponseWriter, r *http.Request) {
 	log.Println("Executing finalHandler")
-	w.Write([]byte("OK123\n"))
+	w.Write([]byte("OK\n"))
 }
 
 func main() {
