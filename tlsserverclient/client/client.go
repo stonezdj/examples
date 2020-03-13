@@ -10,6 +10,7 @@ import (
 	"os"
 )
 
+// put the ca.crt in the current directory, the server and port should be already started
 func main() {
 	if len(os.Args) != 3 {
 		fmt.Println("client <server> <port>")
