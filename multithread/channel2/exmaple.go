@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+/**
+	Use time out to sync goroutine
+ */
 func main() {
 
 	done := make(chan bool)
